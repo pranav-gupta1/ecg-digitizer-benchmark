@@ -205,14 +205,29 @@ the warped canvas is taller than wide, and (2) sideways paper photographed the o
 ends up upside down, because `_rotate_on_resample` always turns clockwise and the shipped config
 disables the flip check (`possibly_flipped: false`). Photos without these failures average 8.1 dB.
 
-### Seed control (running)
+### Seed control: V2 differs from V1 no more than V1 differs from itself
 
-V1 with seed 1 on the same 200 images (`--pipelines v1@1`) to measure the algorithm's own
-run-to-run variability; result in outputs/mac_mps_n300/summary.md under "Waveform agreement".
+V1 was run again on the same 200 images with torch seed 1 (`--pipelines v1@1`, same device).
+The perspective detector's random pixel subsample is the only stochastic step.
+
+| comparison | mean SNR diff (95% CI) | 90th pct abs SNR diff | images off by > 0.5 dB | 90th pct max waveform diff | images within 10 uV |
+|---|---|---|---|---|---|
+| V1 vs V1 (seed 1) | -0.0005 dB [-0.016, 0.015] | 0.074 dB | 3 | 346 uV | 152 |
+| V1 vs V2 | +0.013 dB [-0.015, 0.041] | 0.098 dB | 3 | 450 uV | 148 |
+| V1 (seed 1) vs V2 | +0.013 dB [-0.015, 0.042] | 0.113 dB | 2 | 375 uV | 154 |
+
+The images that differ between V1 and V2 are largely the same images that differ between two V1
+seeds (rank correlation 0.71 on the first 50). V2's differences from V1 are therefore within the
+algorithm's own run-to-run randomness. The one systematic difference is float32 roundoff of about
+2 uV (median max difference) from the on-device FFT and scatter_add, which is why only 54 images
+match V1 within 1 uV against 151 for the V1 reseed. V1's timing also reproduced across the two
+runs (49.1 s vs 49.3 s mean per image), so the speed measurements are stable.
+
+Conclusion for the paper: on 200 validated images, V2 gives the same digitization quality as V1
+(indistinguishable from re-running V1 with another seed) while removing the cropper bottleneck.
 
 ### Still to fill
 
-- seed-control comparison (v1 vs v1@1 against v1 vs v2)
-- orientation-selection experiment on the failing portrait photos
+- orientation-selection experiment on the failing portrait photos (running)
 - torch.profiler pass on V2 for further optimisation candidates
 - CUDA numbers from the mentor's cluster run
