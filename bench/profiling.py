@@ -147,36 +147,47 @@ class GpuUtilSampler:
         }
 
 
-def model_flops(pipeline: Any, image_hw: tuple[int, int]) -> dict[str, Any]:
+def working_hw(pipeline: Any, image_hw: tuple[int, int]) -> tuple[int, int]:
+    """Size the segmentation U-Net actually sees after the wrapper's initial resampling."""
+    h, w = image_hw
+    wrapper = pipeline.wrapper
+    size = wrapper.resample_size
+    if min(h, w) < wrapper.minimum_image_size:
+        s = wrapper.minimum_image_size / min(h, w)
+        return int(h * s), int(w * s)
+    if isinstance(size, int) and max(h, w) > size:
+        s = size / max(h, w)
+        return int(h * s), int(w * s)
+    return h, w
+
+
+def model_flops(pipeline: Any, image_hw: tuple[int, int], probe: int = 512) -> dict[str, Any]:
     """FLOPs of the two U-Nets for one image at the pipeline's working resolution.
 
-    Counted with fvcore (one multiply-add = one FLOP, fvcore convention). The networks are
-    identical in V1 and V2, so this is reported once per run and shared by both pipelines.
-    The lead-name U-Net sees the aligned text-probability map, whose size depends on the
-    crop; the resampled input size is used as an upper bound.
+    Counted with fvcore (one multiply-add = one FLOP, fvcore convention) on CPU copies of the
+    networks at a ``probe`` x ``probe`` input, then scaled by pixel count. The U-Nets are fully
+    convolutional, so FLOPs are proportional to H*W. The networks are identical in V1 and V2.
+    The lead-name U-Net sees the aligned, cropped text map, so the working size is an upper bound.
     """
     try:
         from fvcore.nn import FlopCountAnalysis
     except ImportError:
         return {"error": "fvcore not installed"}
-    wrapper = pipeline.wrapper
-    device = pipeline.device
-    h, w = image_hw
-    results: dict[str, Any] = {"input_hw": [h, w]}
+    import copy
+
+    h, w = working_hw(pipeline, image_hw)
+    scale = (h * w) / (probe * probe)
+    results: dict[str, Any] = {"input_hw": list(image_hw), "working_hw": [h, w], "probe": probe}
+    nets = {"segmentation_unet": (pipeline.wrapper.segmentation_model, 3), "lead_name_unet": (pipeline.wrapper.identifier.unet, 1)}
     with torch.no_grad():
-        x = torch.zeros(1, 3, h, w, device=device)
-        seg = FlopCountAnalysis(wrapper.segmentation_model, x)
-        seg.unsupported_ops_warnings(False)
-        seg.uncalled_modules_warnings(False)
-        results["segmentation_unet_gflops"] = round(seg.total() / 1e9, 2)
-        results["segmentation_unet_params_m"] = round(sum(p.numel() for p in wrapper.segmentation_model.parameters()) / 1e6, 2)
-        unet = pipeline.wrapper.identifier.unet
-        x1 = torch.zeros(1, 1, h, w, device=device)
-        lead = FlopCountAnalysis(unet, x1)
-        lead.unsupported_ops_warnings(False)
-        lead.uncalled_modules_warnings(False)
-        results["lead_name_unet_gflops"] = round(lead.total() / 1e9, 2)
-        results["lead_name_unet_params_m"] = round(sum(p.numel() for p in unet.parameters()) / 1e6, 2)
+        for name, (net, ch) in nets.items():
+            net_cpu = copy.deepcopy(net).to("cpu").eval()
+            fca = FlopCountAnalysis(net_cpu, torch.zeros(1, ch, probe, probe))
+            fca.unsupported_ops_warnings(False)
+            fca.uncalled_modules_warnings(False)
+            results[f"{name}_gflops"] = round(fca.total() * scale / 1e9, 2)
+            results[f"{name}_params_m"] = round(sum(p.numel() for p in net_cpu.parameters()) / 1e6, 2)
+            del net_cpu
     results["total_gflops_per_image"] = round(results["segmentation_unet_gflops"] + results["lead_name_unet_gflops"], 2)
     return results
 

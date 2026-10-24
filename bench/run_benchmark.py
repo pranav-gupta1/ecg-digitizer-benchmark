@@ -163,8 +163,6 @@ def digitize(cfg: dict[str, Any], images: pd.DataFrame, out_dir: Path) -> dict[s
                     if key not in warmed:
                         pipe.warmup(img, n=int(cfg.get("warmup_images", 1)))
                         warmed.add(key)
-                        if not run_info["flops"]:
-                            run_info["flops"] = profiling.model_flops(pipe, (img.shape[2], img.shape[3]))
                     out = pipe(img, e.layout_substring)
                     pred = canonical_numpy(out)
                     save_waveform(waveform_path(out_dir, name, e.image_id), pred)
@@ -184,6 +182,11 @@ def digitize(cfg: dict[str, Any], images: pd.DataFrame, out_dir: Path) -> dict[s
                 row["peak_rss_gb"] = mem.peak()["peak_rss_gb"]
                 writer.writerow({c: row.get(c, "") for c in TIMING_FIELDS})
                 f.flush()
+                if not run_info["flops"] and row["status"] == "ok":
+                    try:  # once per run, outside the timed and error-recorded path
+                        run_info["flops"] = profiling.model_flops(pipe, (row["image_h"], row["image_w"]))
+                    except Exception as ex:  # noqa: BLE001
+                        run_info["flops"] = {"error": f"{type(ex).__name__}: {ex}"[:200]}
             if k % 5 == 0 or k == len(todo):
                 elapsed = time.time() - t_start
                 eta_min = elapsed / k * (len(todo) - k) / 60
