@@ -119,9 +119,9 @@ def agreement_summary(agr: pd.DataFrame, pi: pd.DataFrame) -> dict[str, Any]:
         if a_name in snr and b_name in snr:
             d = (snr[b_name] - snr[a_name]).dropna()
             if len(d) > 1:
-                half = 1.96 * float(d.std()) / np.sqrt(len(d))
+                half = float(1.96 * d.std() / np.sqrt(len(d)))
                 stats.update({
-                    "snr_diff_db_mean": float(d.mean()), "snr_diff_db_mean_ci95": [float(d.mean()) - half, float(d.mean()) + half],
+                    "snr_diff_db_mean": float(d.mean()), "snr_diff_db_mean_ci95": f"[{float(d.mean()) - half:.3f}, {float(d.mean()) + half:.3f}]",
                     "snr_diff_db_median": float(d.median()), "abs_snr_diff_db_median": float(d.abs().median()),
                     "abs_snr_diff_db_p90": float(d.abs().quantile(0.9)),
                     f"images_{b_name}_worse_by_more_than_0.5dB": int((d < -0.5).sum()),
@@ -229,7 +229,7 @@ def fig_v1_vs_v2(pi: pd.DataFrame, path: Path) -> None:
 def fig_speed_stages(timing: pd.DataFrame, path: Path) -> None:
     ok = timing[timing["status"] == "ok"]
     means = ok.groupby("pipeline")[STAGE_COLS].mean()
-    fig, ax = plt.subplots(figsize=(7, 3.2))
+    fig, ax = plt.subplots(figsize=(7.5, 4.2))
     names = list(means.index)
     left = np.zeros(len(names))
     shades = plt.cm.Blues(np.linspace(0.35, 0.9, len(STAGE_COLS)))
@@ -241,7 +241,8 @@ def fig_speed_stages(timing: pd.DataFrame, path: Path) -> None:
         ax.text(left[i] + 0.02 * left.max(), i, f"{left[i]:.2f} s", va="center", color=INK, fontsize=9)
     ax.set_xlabel("mean seconds per image, by stage")
     ax.set_title("Wall time per image (device-synchronized)")
-    ax.legend(ncol=3, fontsize=7, loc="lower right")
+    ax.set_xlim(0, left.max() * 1.15)
+    ax.legend(ncol=4, fontsize=7, loc="upper center", bbox_to_anchor=(0.5, -0.22))
     ax.grid(axis="y", visible=False)
     _save(fig, path)
 
@@ -407,7 +408,9 @@ def write_markdown(out_dir: Path, summary: dict[str, Any], tables: dict[str, pd.
     if len(tables["stage_attribution"]):
         md += ["### Where the speedup comes from (mean seconds per image on common images)", "", tables["stage_attribution"].to_markdown(index=False), ""]
     if e.get("memory"):
-        md += ["### Memory", "", "```", json.dumps(e["memory"], indent=1), "```", ""]
+        md += ["### Memory", "", f"Peak host RSS of the benchmark process: {max(v.get('peak_rss_gb', 0) for v in e['memory'].values())} GB. "
+               "Per-image accelerator memory per pipeline is in the speed table (gpu_mem_*: CUDA peak allocation, or the MPS "
+               "driver allocation right after the forward pass, before the cache is released).", ""]
     if e.get("gpu_util") and any(e["gpu_util"].values()):
         md += ["### GPU utilization (nvidia-smi sampling)", "", "```", json.dumps(e["gpu_util"], indent=1), "```", ""]
     if "quality_by_source" in summary:

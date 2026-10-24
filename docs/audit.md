@@ -157,8 +157,62 @@ published algorithm and plausibly explains the very low SNR the paper reports fo
 Candidate fix, to be evaluated separately from the speed claims: decide rotation from the
 shape of the detected paper quadrilateral (source points) instead of the canvas.
 
+### 200-image run (Apple M5 MPS, stratified sample, seed 0; outputs/mac_mps_n200)
+
+127 PTB-XL, 52 Emory, 21 Ahus images; V1 and V2 interleaved per image, 0 failures.
+
+Speed (mean seconds per image; photos are inflated by swapping on this 16 GB machine):
+
+| | V1 | V2 | V1/V2 |
+|---|---|---|---|
+| mean wall time | 49.1 s | 36.3 s | 1.35x |
+| median wall time | 27.3 s | 14.3 s | 1.91x |
+| scans (clean, fits in memory) | ~21 s | ~5 to 9 s | 4.3 to 4.7x |
+| phone/monitor photos | ~80 to 92 s | ~69 to 83 s | 1.1 to 1.2x |
+
+Where the 12.7 s per image saved comes from: cropping 76% (9.83 s to 0.10 s), feature-map
+resampling 12% (2.20 s to 0.63 s), perspective detection 7%, layout identification 6%, pixel
+size search 1%. Segmentation and signal extraction are unchanged within noise. Achieved
+throughput of the networks is the same in both (about 52 GFLOP/s on this machine); the gain is
+entirely in the non-network stages, as expected from the code diff.
+
+Quality (V2 minus V1, per image, mean SNR over the 12 leads):
+
+- mean +0.013 dB, 95% CI [-0.015, +0.041] dB: no detectable difference
+- median absolute difference 0.00008 dB; 90th percentile 0.10 dB
+- 1 image worse by more than 0.5 dB in V2, 2 better
+- per source and category, means agree within ~0.1 dB except the small monitor-photo groups
+- waveforms: 148 of 200 images agree within 10 uV everywhere; the rest differ through the GPU
+  random-subsample difference (see the seed control below)
+
+Reproduction of the paper's numbers (V1, small n for Ahus):
+
+| | ours | paper |
+|---|---|---|
+| Ahus scanner SNR | 20.4 dB (n=6) | 19.65 dB |
+| Ahus OnePlus SNR | 12.5 dB (n=10) | 12.19 dB |
+| Ahus iPhone SNR | 9.3 dB (n=5) | 10.47 dB |
+| Emory color scan SNR | 7.6 dB (n=18) | 7.34 dB |
+| Emory grayscale scan SNR | 8.7 dB (n=17) | 7.24 dB |
+
+### Photo orientation failures (V1 and V2 alike)
+
+Every portrait-orientation monitor or phone photo in the sample failed (12/12, mean SNR below
+1 dB), while landscape photos of the same categories averaged 6 to 13.5 dB. Two portrait
+degraded-paper photos, where the paper itself was photographed sideways, succeeded. Overlays
+show two mechanisms: (1) portrait photos of a landscape ECG are rotated by 90 degrees because
+the warped canvas is taller than wide, and (2) sideways paper photographed the other way round
+ends up upside down, because `_rotate_on_resample` always turns clockwise and the shipped config
+disables the flip check (`possibly_flipped: false`). Photos without these failures average 8.1 dB.
+
+### Seed control (running)
+
+V1 with seed 1 on the same 200 images (`--pipelines v1@1`) to measure the algorithm's own
+run-to-run variability; result in outputs/mac_mps_n300/summary.md under "Waveform agreement".
+
 ### Still to fill
 
-- 200/300-image run: per-stage attribution, V1 vs V2 waveform agreement, quality by category
+- seed-control comparison (v1 vs v1@1 against v1 vs v2)
+- orientation-selection experiment on the failing portrait photos
 - torch.profiler pass on V2 for further optimisation candidates
 - CUDA numbers from the mentor's cluster run
