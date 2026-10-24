@@ -129,6 +129,14 @@ def build_model_config(
     return node
 
 
+def parse_pipeline_name(name: str, default_seed: int = 0) -> tuple[str, int]:
+    """'v1' -> ('v1', default_seed); 'v1@3' -> ('v1', 3)."""
+    if "@" in name:
+        base, seed = name.split("@", 1)
+        return base, int(seed)
+    return name, default_seed
+
+
 def wrapper_class_path(name: str) -> str:
     return WRAPPER_MODULE[name] + ".InferenceWrapper"
 
@@ -144,10 +152,15 @@ class Pipeline:
         weights_dir: Path = DEFAULT_WEIGHTS_DIR,
         seed: int = 0,
     ) -> None:
+        # "v1@1" = V1 with torch seed 1: a seed-control run that measures the algorithm's own
+        # run-to-run variability (the perspective detector subsamples pixels at random).
+        label = name
+        name, seed = parse_pipeline_name(name, seed)
         if name not in PIPELINE_NAMES:
-            raise ValueError(f"unknown pipeline {name!r}; expected one of {PIPELINE_NAMES}")
+            raise ValueError(f"unknown pipeline {label!r}; expected one of {PIPELINE_NAMES}, optionally with @seed")
         ensure_import_paths()
         self.name = name
+        self.label = label
         self.device = resolve_device(device)
         self.layout_set = layout_set
         self.seed = seed

@@ -17,6 +17,15 @@ from bench.pipelines import STAGE_ORDER  # noqa: E402
 
 # Validated categorical palette (dataviz reference): slot 1 blue = V1, slot 2 orange = V2.
 COLORS = {"v1": "#2a78d6", "v2": "#eb6834"}
+EXTRA_COLORS = ["#1baf7a", "#6250d6", "#e87ba4"]  # validated slots 3, 7, 5 for seed-control runs
+
+
+def color(name: str) -> str:
+    if name in COLORS:
+        return COLORS[name]
+    return EXTRA_COLORS[sum(map(ord, name)) % len(EXTRA_COLORS)]
+
+
 INK, MUTED, GRID = "#0b0b0b", "#898781", "#e1e0d9"
 STAGE_COLS = [s.lower().replace(" ", "_") + "_s" for s in STAGE_ORDER] + ["other_s"]
 
@@ -56,29 +65,70 @@ def per_image(metrics: pd.DataFrame) -> pd.DataFrame:
     ).reset_index()
 
 
-def agreement(out_dir: Path, images: pd.DataFrame, pipelines: list[str]) -> pd.DataFrame:
-    """Per-image V1 vs V2 waveform difference, read back from the saved CSVs."""
-    if "v1" not in pipelines or "v2" not in pipelines:
-        return pd.DataFrame()
+AGREEMENT_PAIRS = [("v1", "v2"), ("v1", "v1@1"), ("v1@1", "v2"), ("v2", "v2@1")]
+
+
+def agreement_pair(out_dir: Path, images: pd.DataFrame, a_name: str, b_name: str) -> pd.DataFrame:
+    """Per-image waveform difference between two pipelines, read back from the saved CSVs."""
     rows = []
     for image_id in images["image_id"]:
-        p1 = out_dir / "waveforms" / "v1" / f"{image_id}.csv"
-        p2 = out_dir / "waveforms" / "v2" / f"{image_id}.csv"
+        p1 = out_dir / "waveforms" / a_name / f"{image_id}.csv"
+        p2 = out_dir / "waveforms" / b_name / f"{image_id}.csv"
         if not (p1.is_file() and p2.is_file()):
             continue
         a, b = pd.read_csv(p1), pd.read_csv(p2)
+        row: dict[str, Any] = {"image_id": image_id, "pair": f"{a_name} vs {b_name}"}
         if a.empty or b.empty or a.shape != b.shape:
-            rows.append({"image_id": image_id, "comparable": False, "max_abs_diff_uv": np.nan, "nan_mask_mismatch": np.nan})
+            rows.append({**row, "comparable": False, "max_abs_diff_uv": np.nan, "mean_abs_diff_uv": np.nan, "nan_mask_mismatch": np.nan})
             continue
         a, b = a[LEAD_NAMES].to_numpy(), b[LEAD_NAMES].to_numpy()
         m = ~(np.isnan(a) | np.isnan(b))
         rows.append({
-            "image_id": image_id, "comparable": True,
+            **row, "comparable": True,
             "max_abs_diff_uv": float(np.abs(a[m] - b[m]).max()) if m.any() else 0.0,
             "mean_abs_diff_uv": float(np.abs(a[m] - b[m]).mean()) if m.any() else 0.0,
             "nan_mask_mismatch": float((np.isnan(a) != np.isnan(b)).mean()),
         })
     return pd.DataFrame(rows)
+
+
+def agreement(out_dir: Path, images: pd.DataFrame, pipelines: list[str]) -> pd.DataFrame:
+    """Pairwise agreement for every available pair in AGREEMENT_PAIRS."""
+    parts = [agreement_pair(out_dir, images, a, b) for a, b in AGREEMENT_PAIRS if a in pipelines and b in pipelines]
+    parts = [p for p in parts if len(p)]
+    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+
+
+def agreement_summary(agr: pd.DataFrame, pi: pd.DataFrame) -> dict[str, Any]:
+    """Waveform and SNR agreement per pair. The seed-control pair (v1 vs v1@1) is the yardstick:
+    V1 vs V2 differences of the same size are within the algorithm's own randomness."""
+    out: dict[str, Any] = {}
+    snr = pi.pivot_table(index="image_id", columns="pipeline", values="snr_db") if len(pi) else pd.DataFrame()
+    for pair, g in agr.groupby("pair"):
+        comp = g[g.comparable]
+        a_name, b_name = pair.split(" vs ")
+        stats: dict[str, Any] = {
+            "n_compared": int(len(comp)), "n_not_comparable": int((~g.comparable).sum()),
+            "images_within_1uV": int((comp.max_abs_diff_uv < 1).sum()),
+            "images_within_10uV": int((comp.max_abs_diff_uv < 10).sum()),
+            "max_abs_diff_uv_median": float(comp.max_abs_diff_uv.median()) if len(comp) else None,
+            "max_abs_diff_uv_p90": float(comp.max_abs_diff_uv.quantile(0.9)) if len(comp) else None,
+            "mean_abs_diff_uv_median": float(comp.mean_abs_diff_uv.median()) if len(comp) else None,
+            "nan_mask_mismatch_mean": float(comp.nan_mask_mismatch.mean()) if len(comp) else None,
+        }
+        if a_name in snr and b_name in snr:
+            d = (snr[b_name] - snr[a_name]).dropna()
+            if len(d) > 1:
+                half = 1.96 * float(d.std()) / np.sqrt(len(d))
+                stats.update({
+                    "snr_diff_db_mean": float(d.mean()), "snr_diff_db_mean_ci95": [float(d.mean()) - half, float(d.mean()) + half],
+                    "snr_diff_db_median": float(d.median()), "abs_snr_diff_db_median": float(d.abs().median()),
+                    "abs_snr_diff_db_p90": float(d.abs().quantile(0.9)),
+                    f"images_{b_name}_worse_by_more_than_0.5dB": int((d < -0.5).sum()),
+                    f"images_{b_name}_better_by_more_than_0.5dB": int((d > 0.5).sum()),
+                })
+        out[pair] = stats
+    return out
 
 
 def speed_table(timing: pd.DataFrame) -> pd.DataFrame:
@@ -147,10 +197,10 @@ def fig_snr_by_category(pi: pd.DataFrame, path: Path) -> None:
         data = [pi[(pi.source_name == s) & (pi.category == c) & (pi.pipeline == name)]["snr_db"].dropna().values for s, c in cats]
         pos = np.arange(len(cats)) + (i - (len(pipelines) - 1) / 2) * width
         bp = ax.boxplot(data, positions=pos, widths=width * 0.9, patch_artist=True, showfliers=False,
-                        medianprops={"color": "white", "linewidth": 1.5}, whiskerprops={"color": COLORS[name]}, capprops={"color": COLORS[name]})
+                        medianprops={"color": "white", "linewidth": 1.5}, whiskerprops={"color": color(name)}, capprops={"color": color(name)})
         for b in bp["boxes"]:
-            b.set(facecolor=COLORS[name], edgecolor="white", linewidth=1)
-        ax.plot([], [], color=COLORS[name], linewidth=6, label=name.upper())
+            b.set(facecolor=color(name), edgecolor="white", linewidth=1)
+        ax.plot([], [], color=color(name), linewidth=6, label=name.upper())
     ax.set_xticks(np.arange(len(cats)))
     ax.set_xticklabels(labels, fontsize=8)
     ax.set_ylabel("per-image mean SNR (dB)")
@@ -200,7 +250,7 @@ def fig_shift_hist(metrics: pd.DataFrame, path: Path) -> None:
     fig, ax = plt.subplots(figsize=(5, 3))
     bins = np.arange(-100, 101, 5)
     for name, g in metrics.groupby("pipeline"):
-        ax.hist(g["shift_ms"].dropna(), bins=bins, histtype="step", linewidth=1.8, color=COLORS[name], label=name.upper())
+        ax.hist(g["shift_ms"].dropna(), bins=bins, histtype="step", linewidth=1.8, color=color(name), label=name.upper())
     ax.set_xlabel("best alignment shift (ms)")
     ax.set_ylabel("lead count")
     ax.set_title("Time shift at best SNR (paper Fig. 2)")
@@ -216,7 +266,7 @@ def fig_snr_distribution_ahus(metrics: pd.DataFrame, path: Path, pipeline: str =
     fig, axes = plt.subplots(1, 3, figsize=(9, 3), sharey=True)
     for ax, dev in zip(axes, devices):
         d = m[m.category == dev]["snr_db"].dropna()
-        ax.hist(d, bins=np.arange(-10, 41, 2), color=COLORS[pipeline], edgecolor="white")
+        ax.hist(d, bins=np.arange(-10, 41, 2), color=color(pipeline), edgecolor="white")
         ax.axvline(d.mean(), color=INK, linewidth=1)
         ax.set_title(f"{dev}: mean {d.mean():.2f} dB (paper {PAPER['ahus_snr_db'][dev]})", fontsize=9)
         ax.set_xlabel("per-lead SNR (dB)")
@@ -253,7 +303,7 @@ def fig_lead_ii_percentiles(out_dir: Path, images: pd.DataFrame, metrics: pd.Dat
             g_ii = gt[lead] - np.nanmean(gt[lead])
             p_ii = pred[lead] - np.nanmean(pred[lead])
             ax.plot(t, g_ii, color=MUTED, linewidth=1, label="ground truth")
-            ax.plot(t, p_ii, color=COLORS[pipeline], linewidth=1, label="digitized")
+            ax.plot(t, p_ii, color=color(pipeline), linewidth=1, label="digitized")
             ax.set_ylabel("µV", fontsize=8)
             ax.set_title(f"{p}th percentile: {row.image_id}, SNR {row.snr_db:.1f} dB", fontsize=8, loc="left")
         axes[-1].set_xlabel("time (s)")
@@ -289,7 +339,7 @@ def paper_comparison(pi: pd.DataFrame, metrics: pd.DataFrame, speed: pd.DataFram
 def build(out_dir: Path, images: pd.DataFrame, metrics: pd.DataFrame, timing: pd.DataFrame, env: dict[str, Any]) -> None:
     fig_dir = out_dir / "figures"
     fig_dir.mkdir(parents=True, exist_ok=True)
-    pipelines = sorted(timing["pipeline"].unique())
+    pipelines = sorted(set(timing["pipeline"].unique()) | (set(metrics["pipeline"].unique()) if len(metrics) else set()))
     pi = per_image(metrics) if len(metrics) else pd.DataFrame()
 
     tables: dict[str, pd.DataFrame] = {}
@@ -329,21 +379,7 @@ def build(out_dir: Path, images: pd.DataFrame, metrics: pd.DataFrame, timing: pd
         summary["quality_by_category"] = tables["by_category"].to_dict(orient="records")
     agr = tables["agreement"]
     if len(agr):
-        comp = agr[agr.comparable]
-        summary["v1_v2_agreement"] = {
-            "n_compared": int(len(comp)), "n_not_comparable": int((~agr.comparable).sum()),
-            "images_identical_within_1uV": int((comp.max_abs_diff_uv < 1).sum()),
-            "max_abs_diff_uv_median": float(comp.max_abs_diff_uv.median()) if len(comp) else None,
-            "max_abs_diff_uv_max": float(comp.max_abs_diff_uv.max()) if len(comp) else None,
-            "nan_mask_mismatch_mean": float(comp.nan_mask_mismatch.mean()) if len(comp) else None,
-        }
-        if len(pi) and {"v1", "v2"} <= set(pipelines):
-            w = pi.pivot_table(index="image_id", columns="pipeline", values="snr_db").dropna()
-            d = w.v2 - w.v1
-            summary["v1_v2_agreement"].update({"snr_diff_db_mean": float(d.mean()), "snr_diff_db_median": float(d.median()),
-                                               "snr_diff_db_min": float(d.min()), "snr_diff_db_max": float(d.max()),
-                                               "images_v2_worse_by_more_than_0.5dB": int((d < -0.5).sum()),
-                                               "images_v2_better_by_more_than_0.5dB": int((d > 0.5).sum())})
+        summary["agreement"] = agreement_summary(agr, pi)
     with open(out_dir / "summary.json", "w") as f:
         json.dump(summary, f, indent=2, default=str)
     write_markdown(out_dir, summary, tables, env)
@@ -378,8 +414,11 @@ def write_markdown(out_dir: Path, summary: dict[str, Any], tables: dict[str, pd.
         md += ["## Quality (per-lead metrics, mean over the 12 standard leads; rhythm strip reported separately)", "",
                tables["by_source"].to_markdown(index=False), "", "### By capture category", "", tables["by_category"].to_markdown(index=False), "",
                "### Lead II rhythm strip", "", tables["rhythm_strip"].to_markdown(index=False), ""]
-    if summary.get("v1_v2_agreement"):
-        md += ["## V1 vs V2 agreement", "", "```", json.dumps(summary["v1_v2_agreement"], indent=1), "```", ""]
+    if summary.get("agreement"):
+        md += ["## Waveform agreement between pipelines", "",
+               "`v1 vs v1@1` is the seed control: V1 against itself with a different random seed. V1 vs V2 differences of "
+               "similar size are within the algorithm's own run-to-run randomness (perspective-detector pixel subsampling).", "",
+               pd.DataFrame(summary["agreement"]).T.to_markdown(), ""]
     if summary.get("paper_comparison"):
         md += ["## Comparison with the npj paper", "", pd.DataFrame(summary["paper_comparison"]).to_markdown(index=False), ""]
     md += ["## Figures", ""] + [f"- figures/{p.name}" for p in sorted((out_dir / "figures").glob("*.png"))] + [""]

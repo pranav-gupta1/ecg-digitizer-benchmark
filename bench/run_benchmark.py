@@ -201,11 +201,15 @@ def digitize(cfg: dict[str, Any], images: pd.DataFrame, out_dir: Path) -> dict[s
 def evaluate_all(cfg: dict[str, Any], images: pd.DataFrame, out_dir: Path) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     gt_cache: dict[str, tuple[np.ndarray, int]] = {}
+    # every pipeline with saved waveforms in this output dir, not just this invocation's, so a
+    # later seed-control run (e.g. --pipelines v1@1) re-evaluates the earlier ones too
+    wave_dir = out_dir / "waveforms"
+    names = sorted(set(cfg["pipelines"]) | ({p.name for p in wave_dir.iterdir() if p.is_dir()} if wave_dir.is_dir() else set()))
     for _, e in images.iterrows():
         if e.gt_hea not in gt_cache:
             gt_cache[e.gt_hea] = load_ground_truth(e.gt_hea, e.seconds)
         gt, _ = gt_cache[e.gt_hea]
-        for name in cfg["pipelines"]:
+        for name in names:
             path = waveform_path(out_dir, name, e.image_id)
             if not path.is_file():
                 continue
