@@ -226,8 +226,31 @@ runs (49.1 s vs 49.3 s mean per image), so the speed measurements are stable.
 Conclusion for the paper: on 200 validated images, V2 gives the same digitization quality as V1
 (indistinguishable from re-running V1 with another seed) while removing the cropper bottleneck.
 
+### Orientation selection (experimental `v2+orient`, outputs/mac_mps_orient)
+
+All 16 portrait images from the 200-image sample plus 3 landscape photo controls. When the
+upstream rule rotates the warped tensor, `v2+orient` also runs counter-clockwise and no
+rotation, and keeps the candidate with the lowest layout-matching cost. No ground truth is used.
+
+| | V2 | V2 + orientation selection |
+|---|---|---|
+| portrait images failing (SNR < 1 dB or no usable leads) | 14 / 16 | 4 / 16 |
+| sideways phone photos (4) | -2.4 to -6.8 dB (read upside down) | +4.3 to +8.9 dB, all chose counter-clockwise |
+| portrait monitor photos (10) | all failed | 6 rescued (8 to 13 dB), all chose no rotation |
+| portrait degraded-paper photos (2) | 6.7, 8.3 dB | unchanged (default kept) |
+| landscape controls (3) | | bit-identical (rule does not fire) |
+| time per portrait image (Mac MPS) | 80 s | 338 s (4.2x; landscape images unaffected) |
+
+The 3 images that scored lower by more than 0.5 dB were failures under both (about 0 dB to
+-1.5 dB). The 4 remaining failures are PTB-XL monitor photos with other problems (for example a
+6x4 layout misidentification). This is a quality change, not a speed change, so it is reported
+separately from the V1 vs V2 equivalence claim. The extra cost could be cut by selecting the
+rotation from a cheaper signal than a full re-run (for example the lead-name U-Net alone).
+
 ### Still to fill
 
-- orientation-selection experiment on the failing portrait photos (running)
+- extension from 200 to 300 images (resumable; stopped on request)
+- torch.profiler pass on V2 for further optimisation candidates
+- CUDA numbers from the mentor's cluster run
 - torch.profiler pass on V2 for further optimisation candidates
 - CUDA numbers from the mentor's cluster run
