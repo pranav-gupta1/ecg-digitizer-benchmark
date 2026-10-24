@@ -252,5 +252,3 @@ rotation from a cheaper signal than a full re-run (for example the lead-name U-N
 - extension from 200 to 300 images (resumable; stopped on request)
 - torch.profiler pass on V2 for further optimisation candidates
 - CUDA numbers from the mentor's cluster run
-- torch.profiler pass on V2 for further optimisation candidates
-- CUDA numbers from the mentor's cluster run
