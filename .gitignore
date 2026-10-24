@@ -1,0 +1,21 @@
+# data, weights and run outputs are never committed
+weights/*.pt
+outputs/
+data/
+ecg-image-database/
+configs/_generated/
+*.zip
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# env / editor
+.env
+data.env
+.DS_Store
+.vscode/
+.idea/

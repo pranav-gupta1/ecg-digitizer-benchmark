@@ -1,0 +1,26 @@
+name: ecg-bench
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - torch>=2.5
+      - torchvision>=0.20
+      - numpy
+      - scipy
+      - scikit-image
+      - scikit-learn
+      - networkx
+      - opencv-python-headless
+      - torch-tps
+      - yacs
+      - pyyaml
+      - matplotlib
+      - pandas
+      - tqdm
+      - wfdb
+      - psutil
+      - fvcore
+      - kaggle
+      - pytest

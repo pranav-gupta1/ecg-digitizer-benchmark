@@ -1,0 +1,5 @@
+source: https://github.com/justinadjasu/I-Love-Paper/tree/main/src/StenhendeV2
+commit: fb99ccc161ebecc1cc4674ae1c05e344655a68b2 (2026-06-04 17:25:38 -0700)
+license: none in upstream; copied with the authors' permission (Rayan / Justin Adjasu), private repo.
+subset: the whole src/StenhendeV2 folder (digitizer, overlay, scripts).
+modifications: none. Device and weight paths are overridden at runtime by bench/pipelines.py.

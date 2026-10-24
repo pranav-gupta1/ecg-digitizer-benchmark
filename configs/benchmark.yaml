@@ -1,0 +1,15 @@
+# Default benchmark settings. Every key can be overridden on the command line, e.g.
+#   python bench/run_benchmark.py --data-dir /path/to/ecg-image-database --n-images 100 --device cuda
+data_dir: ~/Documents/ecg-image-database   # root containing D0/, D1/, D2/
+output_dir: outputs/run                    # waveforms, metrics, figures, summary
+subset: all                                # all | ahus | emory | ptbxl (comma-separated ok)
+n_images: null                             # null = all images in the subset
+fraction: null                             # alternative to n_images, e.g. 0.1
+seed: 0                                    # deterministic sampling and torch RNG
+device: auto                               # auto | cpu | cuda | mps
+pipelines: [v1, v2]
+weights_dir: weights
+warmup_images: 2                           # untimed forward passes before measuring
+save_overlays: 12                          # number of V2 overlay figures (0 to disable)
+max_shift_ms: 100                          # evaluator alignment window (paper: +/- 100 ms)
+resume: true                               # skip images already present in the output dir
