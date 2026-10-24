@@ -154,8 +154,10 @@ class Pipeline:
     ) -> None:
         # "v1@1" = V1 with torch seed 1: a seed-control run that measures the algorithm's own
         # run-to-run variability (the perspective detector subsamples pixels at random).
+        # "v2+orient" = V2 with orientation selection (see _forward_orientation_search).
         label = name
-        name, seed = parse_pipeline_name(name, seed)
+        self.orientation_search = "+orient" in name
+        name, seed = parse_pipeline_name(name.replace("+orient", ""), seed)
         if name not in PIPELINE_NAMES:
             raise ValueError(f"unknown pipeline {label!r}; expected one of {PIPELINE_NAMES}, optionally with @seed")
         ensure_import_paths()
@@ -239,16 +241,10 @@ class Pipeline:
         """
         if not isinstance(layout_substring, str):  # pandas turns None into NaN
             layout_substring = None
-        torch.manual_seed(self.seed)
-        synchronize(self.device)
-        t0 = time.perf_counter()
-        out = self.wrapper(image, layout_should_include_substring=layout_substring)
-        synchronize(self.device)
-        wall = time.perf_counter() - t0
-        times = dict(self.wrapper.times)
-        out["stage_times"] = {k: times.get(k, 0.0) for k in STAGE_ORDER}
-        out["stage_times"]["Other"] = max(wall - sum(out["stage_times"].values(), 0.0), 0.0)
-        out["wall_time"] = wall
+        if self.orientation_search:
+            out = self._forward_orientation_search(image, layout_substring)
+        else:
+            out = self._forward(image, layout_substring)
         # Accelerator memory for this image, then release the cache between images (outside the
         # timed region). On a 16 GB Mac the MPS cache otherwise grows until the machine swaps.
         out["gpu_mem_gb"] = 0.0
@@ -260,6 +256,67 @@ class Pipeline:
             torch.cuda.reset_peak_memory_stats()
             torch.cuda.empty_cache()
         return out
+
+    def _forward(self, image: torch.Tensor, layout_substring: str | None) -> dict[str, Any]:
+        torch.manual_seed(self.seed)
+        synchronize(self.device)
+        t0 = time.perf_counter()
+        out = self.wrapper(image, layout_should_include_substring=layout_substring)
+        synchronize(self.device)
+        wall = time.perf_counter() - t0
+        times = dict(self.wrapper.times)
+        out["stage_times"] = {k: times.get(k, 0.0) for k in STAGE_ORDER}
+        out["stage_times"]["Other"] = max(wall - sum(out["stage_times"].values(), 0.0), 0.0)
+        out["wall_time"] = wall
+        return out
+
+    def _forward_orientation_search(self, image: torch.Tensor, layout_substring: str | None) -> dict[str, Any]:
+        """Experimental: choose the post-warp rotation by layout-matching cost.
+
+        Upstream ``_rotate_on_resample`` turns the warped tensor 90 degrees clockwise whenever it
+        is taller than wide. That is wrong for portrait photos of a landscape ECG (monitor and
+        phone photos) and for sideways paper photographed the other way round. When the default
+        rule fires, this also runs the pipeline with a counter-clockwise turn and with no turn,
+        and keeps the candidate with the lowest layout-matching cost (the algorithm's own fit
+        score; no ground truth involved). Images where the rule does not fire run once and are
+        identical to the base pipeline. Wall time is the sum over all candidates run.
+        """
+        fired = {"rotated": False}
+
+        def rotation(mode: str) -> Any:
+            def rotate(img: torch.Tensor, sig: torch.Tensor, grid: torch.Tensor, text: torch.Tensor) -> tuple[torch.Tensor, ...]:
+                if img.shape[2] <= img.shape[3]:
+                    return img, sig, grid, text
+                fired["rotated"] = True
+                if mode == "none":
+                    return img, sig, grid, text
+                k = 3 if mode == "cw" else 1  # k=3 is the upstream behaviour
+                return tuple(torch.rot90(x, k=k, dims=(2, 3)) for x in (img, sig, grid, text))
+
+            return rotate
+
+        candidates: list[tuple[str, dict[str, Any]]] = []
+        try:
+            for mode in ("cw", "ccw", "none"):
+                self.wrapper._rotate_on_resample = rotation(mode)  # instance attribute shadows the method
+                fired["rotated"] = False
+                candidates.append((mode, self._forward(image, layout_substring)))
+                if mode == "cw" and not fired["rotated"]:
+                    break
+        finally:
+            if "_rotate_on_resample" in self.wrapper.__dict__:
+                del self.wrapper.__dict__["_rotate_on_resample"]
+
+        def cost(o: dict[str, Any]) -> float:
+            c = float(o["signal"]["layout_matching_cost"])
+            return c if c == c else float("inf")  # NaN -> inf
+
+        best_mode, best = min(candidates, key=lambda mc: cost(mc[1]))  # ties keep the upstream choice
+        best["orientation"] = best_mode
+        best["orientation_costs"] = {m: cost(o) for m, o in candidates}
+        best["stage_times"] = {k: sum(o["stage_times"][k] for _, o in candidates) for k in best["stage_times"]}
+        best["wall_time"] = sum(o["wall_time"] for _, o in candidates)
+        return best
 
     def warmup(self, image: torch.Tensor, n: int = 1) -> None:
         for _ in range(n):

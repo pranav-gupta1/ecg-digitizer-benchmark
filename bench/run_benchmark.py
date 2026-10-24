@@ -63,6 +63,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--warmup-images", type=int)
     p.add_argument("--save-overlays", type=int)
     p.add_argument("--max-shift-ms", type=int)
+    p.add_argument("--image-list", help="text file with one image_id per line; overrides --subset/--n-images/--fraction")
     p.add_argument("--no-resume", action="store_true")
     p.add_argument("--skip-report", action="store_true", help="only digitize and evaluate")
     return p.parse_args()
@@ -166,7 +167,7 @@ def digitize(cfg: dict[str, Any], images: pd.DataFrame, out_dir: Path) -> dict[s
                     out = pipe(img, e.layout_substring)
                     pred = canonical_numpy(out)
                     save_waveform(waveform_path(out_dir, name, e.image_id), pred)
-                    row["layout"] = out["layout_name"]
+                    row["layout"] = out["layout_name"] + (f" [rot={out['orientation']}]" if "orientation" in out else "")
                     row["layout_cost"] = round(float(out["signal"]["layout_matching_cost"]), 5)
                     row["wall_s"] = round(out["wall_time"], 4)
                     row["gpu_mem_gb"] = round(out.get("gpu_mem_gb", 0.0), 3)
@@ -231,7 +232,14 @@ def main() -> None:
     print(f"device={cfg['device']}  data_dir={cfg['data_dir']}  output_dir={out_dir}")
 
     index = build_index(cfg["data_dir"])
-    images = select_images(index, cfg["subset"], cfg.get("n_images"), cfg.get("fraction"), cfg["seed"])
+    if args.image_list:
+        wanted = {line.strip() for line in open(args.image_list) if line.strip()}
+        images = index[index["image_id"].isin(wanted)].sort_values("image_id").reset_index(drop=True)
+        missing = wanted - set(images["image_id"])
+        if missing:
+            print(f"warning: {len(missing)} listed images not found, e.g. {sorted(missing)[:3]}")
+    else:
+        images = select_images(index, cfg["subset"], cfg.get("n_images"), cfg.get("fraction"), cfg["seed"])
     images.to_csv(out_dir / "images.csv", index=False)
     print(f"{len(images)} images selected from {len(index)} indexed "
           f"({images['source_name'].value_counts().to_dict()})")
