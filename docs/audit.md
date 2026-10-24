@@ -100,8 +100,65 @@ training-time text-image augmentation in `src/transform/vision.py`, not included
 
 ## Measured results
 
-TODO after the 300-image run and the mentor's full run:
-- per-stage timing and speedup attribution (table_stage_attribution.csv)
-- end-to-end waveform agreement on CPU (expected: identical) and on GPU (randperm effect)
-- quality metrics V1 vs V2 by source and category
-- further optimisation candidates from torch.profiler
+### Equivalence tests (tests/equivalence, 13 passing)
+
+- Configs: identical for V1 and V2 in both layout sets, apart from class paths.
+- All stages run in both; same resample size (3000), same dewarping setting (off).
+- Unchanged modules: byte-identical (unet, signal_extractor, lead_identifier); dewarper differs
+  only in the two type-hint lines from upstream commit 69d68c1.
+- Cropper: integer buffers identical, bin values within 1e-6, source points within 1e-4. No bin
+  reached `granularity` on real images, so the new clamp is a no-op there.
+- Pixel size finder: FFT autocorrelation within 1e-4 relative error; same pixel spacing.
+- Perspective detector: identical on CPU with a fixed seed.
+- End to end on CPU: waveforms identical (same NaN mask, max difference below 1e-3 uV).
+- End to end on MPS: max 68 uV difference with each version's own RNG; 2.1 uV once V2's
+  on-device `randperm` is forced onto the CPU generator. The remainder is float32 roundoff from
+  the on-device FFT and `scatter_add`. Signal amplitudes are ~1000 uV.
+
+### The speedup is device-specific (Apple M5, 16 GB, torch 2.14.1)
+
+Single images, one process, after a warm-up pass (scratch probe, 2026-10-24):
+
+| image | device | V1 wall | V2 wall | V1 cropping | V2 cropping |
+|---|---|---|---|---|---|
+| D1 color scan, 2130x1652 | MPS | 18.9 s | 3.0 s | 5.7 s | <0.1 s |
+| D0 phone photo, 4032x3024 | MPS | 83.2 s | 68.8 s | 14.8 s | <0.1 s |
+| D1 color scan | CPU | 47.9 s | 50.5 s | 0.5 s | <0.1 s |
+| D0 phone photo | CPU | 250.4 s | 233.2 s | 0.8 s | <0.1 s |
+
+On CPU, V1's cropping already takes under a second, and the two versions run at the same speed
+within noise. On the GPU, V1's cropper builds its bin buffer on the CPU and moves an
+(H, W, granularity) one-hot tensor (about 4.3 GB at 3000x2250) to the device; V2 keeps
+everything on the device and never materialises the one-hot. So the published speedup is a
+GPU-path effect, and the GPU is the setting that matters at scale. The mentor's CUDA run will
+give the definitive numbers.
+
+### Memory on a 16 GB Mac
+
+At the 3000 px working resolution the pipeline needs more than 10.5 GB of accelerator memory
+for a phone photo: capping MPS at 0.9x the recommended working set runs out of memory. Without
+the cap it reaches 16 to 20 GB and the machine swaps, which inflates every stage, including
+stages whose code is identical in V1 and V2 (segmentation 0.9 s on a scan vs 25 to 30 s on a
+photo; layout identification 1 s to 60 s). V1's extra cropper memory pushes the later stages
+further into swap (layout identification averaged 10 to 13 s after V1's cropper vs 0.8 to 3 s
+after V2's on the same scans). Timings on photos from this machine therefore measure memory
+pressure as much as compute; scans fit in memory and give clean timings.
+
+### Failure mode found with the overlay: portrait monitor photos
+
+Monitor photos (variant 07) are portrait images (3000x4000) of a landscape ECG.
+`InferenceWrapper._rotate_on_resample` rotates the warped tensor by 90 degrees whenever its
+canvas is taller than wide. The perspective warp keeps the input canvas, so a portrait photo is
+always rotated and the landscape ECG ends up sideways. The overlay shows the result: on
+D0_000324_07 only the last ~1 cm of each row was extracted (the drawn stubs land exactly on the
+printed traces, so the overlay geometry itself is right), and on D0_007904_07 nothing usable was
+extracted (SNR about 0 dB). The logic is identical in V1 and V2, so it is a limitation of the
+published algorithm and plausibly explains the very low SNR the paper reports for photos.
+Candidate fix, to be evaluated separately from the speed claims: decide rotation from the
+shape of the detected paper quadrilateral (source points) instead of the canvas.
+
+### Still to fill
+
+- 200/300-image run: per-stage attribution, V1 vs V2 waveform agreement, quality by category
+- torch.profiler pass on V2 for further optimisation candidates
+- CUDA numbers from the mentor's cluster run

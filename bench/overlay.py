@@ -37,7 +37,12 @@ def pick_cases(images: pd.DataFrame, metrics: pd.DataFrame, n: int) -> pd.DataFr
             extra["case"] = "random"
             sel = pd.concat([sel, extra])
         picks.append(sel)
-    out = pd.concat(picks) if picks else per_image.head(0)
+    if not picks:
+        return per_image.head(0)
+    out = pd.concat(picks)
+    # round-robin over sources by case priority, so a small n still covers every source
+    priority = {"best": 0, "worst": 1, "median": 2, "random": 3}
+    out = out.assign(_p=out["case"].map(priority)).sort_values(["_p", "source"], kind="stable").drop(columns="_p")
     return out.head(n)
 
 

@@ -356,7 +356,8 @@ def write_markdown(out_dir: Path, summary: dict[str, Any], tables: dict[str, pd.
            f"{summary['n_images']} images ({summary['images_per_source']}).", f"V1 commit {e.get('v1_commit', '')[:12]}, V2 commit {e.get('v2_commit', '')[:12]}.", ""]
     if "flops" in e and e["flops"]:
         f = e["flops"]
-        md += [f"Model FLOPs per image at {f.get('input_hw')}: segmentation U-Net {f.get('segmentation_unet_gflops')} GFLOPs "
+        md += [f"Model FLOPs per image at working resolution {f.get('working_hw')} (input {f.get('input_hw')}; fvcore, scaled from a "
+               f"{f.get('probe')}px probe): segmentation U-Net {f.get('segmentation_unet_gflops')} GFLOPs "
                f"({f.get('segmentation_unet_params_m')} M params), lead-name U-Net {f.get('lead_name_unet_gflops')} GFLOPs "
                f"({f.get('lead_name_unet_params_m')} M params). Identical for V1 and V2.", ""]
     md += ["## Speed", "", tables["speed"].to_markdown(index=False), ""]
