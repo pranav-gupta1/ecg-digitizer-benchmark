@@ -247,6 +247,22 @@ The 3 images that scored lower by more than 0.5 dB were failures under both (abo
 separately from the V1 vs V2 equivalence claim. The extra cost could be cut by selecting the
 rotation from a cheaper signal than a full re-run (for example the lead-name U-Net alone).
 
+### Ahus reproduction with more images (outputs/mac_mps_ahus60 pooled with the 21 from the 200-image run)
+
+78 unique Ahus images (32 scanner, 23 OnePlus, 23 iPhone), 120/120 runs successful in the new set.
+
+| device | V1 mean SNR | V2 mean SNR | paper (Stenhede et al. 2026) |
+|---|---|---|---|
+| scanner | 19.62 dB | 19.67 dB | 19.65 dB |
+| OnePlus | 11.82 dB | 11.84 dB | 12.19 dB |
+| iPhone | 9.55 dB | 9.57 dB | 10.47 dB |
+
+The scanner result reproduces the published value almost exactly; OnePlus and iPhone are within
+0.4 and 0.9 dB with the same device ordering. V2 minus V1 per image: +0.03 dB, 95% CI
+[-0.01, +0.08]; median absolute difference 0.0002 dB. Speed on Ahus on this machine is only
+1.14x (67.3 s vs 59.2 s per image): the 4624 to 7016 px images are resampled to 3000 px and
+swap on 16 GB, which dominates both versions.
+
 ### Why layout identification is slower inside V1 (outputs/experiments/layout_id_attribution.csv)
 
 The layout identifier is identical code in V1 and V2, yet it took ~5 s per scan inside V1 and
