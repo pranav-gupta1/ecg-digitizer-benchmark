@@ -247,6 +247,42 @@ The 3 images that scored lower by more than 0.5 dB were failures under both (abo
 separately from the V1 vs V2 equivalence claim. The extra cost could be cut by selecting the
 rotation from a cheaper signal than a full re-run (for example the lead-name U-Net alone).
 
+### Why layout identification is slower inside V1 (outputs/experiments/layout_id_attribution.csv)
+
+The layout identifier is identical code in V1 and V2, yet it took ~5 s per scan inside V1 and
+~0.7 s inside V2. Two hypotheses, tested on two scans (3 timed runs each, after a warm-up):
+
+| variant | layout identification (median) |
+|---|---|
+| V1 as published | ~5 s |
+| V1, pixel size cast to Python float (type hypothesis) | ~4.6 s (within noise) |
+| V1, MPS cache emptied right after cropping (memory hypothesis) | 0.75 s |
+| V2 | 0.68 s |
+
+The memory hypothesis explains it: the cached blocks from V1's one-hot cropper buffer slow the
+later stages on unified memory. V2's cropper rewrite therefore saves time twice, in cropping
+itself and in removing that downstream memory penalty, so the "layout identification" share of
+the speedup in the stage attribution is caused by the cropper change too.
+
+### Further optimisation candidates (torch.profiler on V2, one scan, outputs/experiments)
+
+V2 takes 2.66 s on a 2130x1652 scan; over half of that is overhead from many tiny operations:
+`aten::copy_` (9,087 calls, 0.77 s), `.item()` host syncs (912 calls, 0.71 s) and
+`aten::nonzero` (9,453 calls, 0.68 s). Stage times: segmentation 0.72 s, signal extraction
+0.75 s, layout identification 0.71 s, everything else under 0.3 s. Candidates, none applied yet
+(each would need to pass the equivalence tests):
+
+1. Signal extractor (identical in V1 and V2, runs on CPU): per-region Python loops and a greedy
+   column-by-column path trace (`_trace_horizontal_path`) with an `.item()` per column. A
+   vectorised or compiled (e.g. numba) version is the largest non-network target. Note it also
+   adds `torch.randn(...) * 1e-6` tie-break noise, a second (negligible) source of randomness.
+2. Host syncs and small copies in the lead identifier and signal extractor (about 900 `.item()`
+   calls per image).
+3. On memory-limited hardware, releasing the MPS cache between stages changes no arithmetic and
+   may avoid swap; tested in outputs/experiments/empty_cache_between_stages.csv.
+4. The lead-name U-Net runs at full working resolution and dominates layout identification on
+   photos; a lower resolution would be faster but changes outputs, so it needs its own validation.
+
 ### Still to fill
 
 - extension from 200 to 300 images (resumable; stopped on request)
