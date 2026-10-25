@@ -263,6 +263,18 @@ The scanner result reproduces the published value almost exactly; OnePlus and iP
 1.14x (67.3 s vs 59.2 s per image): the 4624 to 7016 px images are resampled to 3000 px and
 swap on 16 GB, which dominates both versions.
 
+### Is the photo gap a time-scale error? Mostly not (outputs/experiments/time_scale_fit_ahus.csv)
+
+The worst Ahus image in the new set (D2_000062_l02, OnePlus, 2.8 dB) has an overlay that sits on
+the printed traces almost everywhere, amplitudes within 7% of the reference, and a constant
+~33 ms best shift on every lead, which suggested a small horizontal (pixel-spacing) error. On
+that image a 1% stretch of the time axis lifts its SNR from 1.8 to 5.9 dB. Across all 78 Ahus
+images, though, the best stretch is exactly 1.00 at the median on every device; only 3 of 23
+OnePlus images (13%) need 1% or more, and none of the iPhone or scanner images. A perfect time
+scale would add about 1.0 dB (OnePlus), 0.5 dB (iPhone) and 0.1 dB (scanner), against an 8 to
+10 dB gap between scans and photos. The photo gap is therefore mostly trace-extraction quality,
+not pixel-spacing estimation. (Diagnostic only: the stretch is chosen using the ground truth.)
+
 ### Why layout identification is slower inside V1 (outputs/experiments/layout_id_attribution.csv)
 
 The layout identifier is identical code in V1 and V2, yet it took ~5 s per scan inside V1 and
