@@ -1,6 +1,6 @@
 # Audit: Open-ECG-Digitizer (V1) vs StenhedeV2 (V2)
 
-Status: code audit complete; numbers marked TODO are filled from benchmark runs.
+Status: code audit and Mac (Apple M5, MPS) benchmark complete; CUDA numbers pending from the cluster run.
 
 ## Provenance
 
@@ -205,6 +205,27 @@ Reproduction of the paper's numbers (V1, small n for Ahus):
 - Attribution of the 11.6 s saved per image: cropping 81%, feature-map resampling 12%,
   perspective detection 7%, pixel size search 1%, layout identification 2%; segmentation and
   signal extraction unchanged within noise.
+
+### Fastest method with no quality cost: V2 + cache release (outputs/mac_mps_n300, `v2+cache`)
+
+Same 300 images, same machine. `v2+cache` releases the accelerator cache after every stage
+(cost of the release counted inside the stage timers). Its outputs are bit-identical to V2 on
+all 300 images (max difference 0.0 uV, same NaN masks), so its quality versus V1 is V2's:
++0.016 dB, 95% CI [-0.007, +0.040].
+
+| per image | V1 | V2 | V2 + cache release | V1 / (V2 + cache) |
+|---|---|---|---|---|
+| mean | 47.5 s | 35.8 s | 15.5 s | 3.06x |
+| median | 27.6 s | 14.1 s | 4.0 s | 6.88x |
+| scans and synthetic (median) | 20.5 s | 4.1 s | 2.7 s | 7.7x |
+| photos (median) | 78.0 s | 70.4 s | 29.7 s | 2.6x |
+| Ahus (median) | 72.2 s | 66.0 s | 29.7 s | 2.4x |
+
+On this 16 GB unified-memory machine, V2's cropper rewrite removes the biggest compute
+bottleneck and the cache release removes the swap that dominated large images. The second
+change only matters when accelerator memory is tight; on a large CUDA GPU it should be checked
+(it may be neutral or slightly slower there). Note the gpu_mem column for `v2+cache` is read
+after the final release and is not a peak.
 
 ### Photo orientation failures (V1 and V2 alike)
 
