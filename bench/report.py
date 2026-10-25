@@ -65,7 +65,7 @@ def per_image(metrics: pd.DataFrame) -> pd.DataFrame:
     ).reset_index()
 
 
-AGREEMENT_PAIRS = [("v1", "v2"), ("v1", "v1@1"), ("v1@1", "v2"), ("v2", "v2@1"), ("v2", "v2+orient")]
+AGREEMENT_PAIRS = [("v1", "v2"), ("v1", "v1@1"), ("v1@1", "v2"), ("v2", "v2@1"), ("v2", "v2+orient"), ("v2", "v2+cache"), ("v1", "v2+cache")]
 
 
 def agreement_pair(out_dir: Path, images: pd.DataFrame, a_name: str, b_name: str) -> pd.DataFrame:

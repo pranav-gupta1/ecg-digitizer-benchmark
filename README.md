@@ -44,6 +44,18 @@ Flags (all also settable in `configs/benchmark.yaml`): `--data-dir`, `--output-d
 Runs are resumable: re-running with the same `--output-dir` skips images already done, so an
 interrupted cluster or Colab job continues where it stopped.
 
+Pipeline names for `--pipelines` (comma-separated):
+
+| name | what it is |
+|---|---|
+| `v1` | Open-ECG-Digitizer as published |
+| `v2` | StenhedeV2 (the speed-optimised fork) |
+| `v1@1`, `v2@1` | the same with torch seed 1, a seed control for the algorithm's own randomness |
+| `v2+cache` | V2 releasing the accelerator cache after every stage; identical outputs, avoids swap on 16 GB Macs |
+| `v2+orient` | experimental: V2 choosing the post-warp rotation by layout-matching cost (fixes portrait photos) |
+
+`--image-list FILE` runs an explicit list of image ids (one per line) instead of a sample.
+
 Outputs in `--output-dir`:
 
 | file | content |

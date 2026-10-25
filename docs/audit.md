@@ -195,6 +195,17 @@ Reproduction of the paper's numbers (V1, small n for Ahus):
 | Emory color scan SNR | 7.6 dB (n=18) | 7.34 dB |
 | Emory grayscale scan SNR | 8.7 dB (n=17) | 7.24 dB |
 
+### 300-image run (same seed; the 200 are a subset; outputs/mac_mps_n300)
+
+191 PTB-XL, 78 Emory, 31 Ahus images; 600/600 runs successful.
+
+- Quality, V2 minus V1 per image: +0.016 dB, 95% CI [-0.007, +0.040]; 90th percentile absolute
+  difference 0.11 dB; 213 of 300 images agree within 10 uV everywhere.
+- Speed: 47.5 s vs 35.8 s mean (1.33x), 27.6 s vs 14.1 s median (1.95x).
+- Attribution of the 11.6 s saved per image: cropping 81%, feature-map resampling 12%,
+  perspective detection 7%, pixel size search 1%, layout identification 2%; segmentation and
+  signal extraction unchanged within noise.
+
 ### Photo orientation failures (V1 and V2 alike)
 
 Every portrait-orientation monitor or phone photo in the sample failed (12/12, mean SNR below
@@ -307,7 +318,18 @@ V2 takes 2.66 s on a 2130x1652 scan; over half of that is overhead from many tin
 2. Host syncs and small copies in the lead identifier and signal extractor (about 900 `.item()`
    calls per image).
 3. On memory-limited hardware, releasing the MPS cache between stages changes no arithmetic and
-   may avoid swap; tested in outputs/experiments/empty_cache_between_stages.csv.
+   avoids swap. Tested (outputs/experiments/empty_cache_between_stages.csv, 2 timed runs each):
+
+   | image | V2 | V2, cache released after each stage | outputs |
+   |---|---|---|---|
+   | phone photo 4032x3024 | 58.8 s | 25.3 s (2.3x) | identical |
+   | monitor photo 4000x3000 | 61.7 s | 30.9 s (2.0x) | identical |
+   | scan 2130x1652 | 3.0 s | 2.7 s (1.1x) | identical |
+
+   Layout identification on photos fell from ~26 s to ~4 s. Available as the `v2+cache`
+   pipeline; its 300-image run is in outputs/mac_mps_n300. On a CUDA GPU with ample memory the
+   effect is expected to be neutral or slightly negative (the caching allocator then helps),
+   which the cluster run should check.
 4. The lead-name U-Net runs at full working resolution and dominates layout identification on
    photos; a lower resolution would be faster but changes outputs, so it needs its own validation.
 

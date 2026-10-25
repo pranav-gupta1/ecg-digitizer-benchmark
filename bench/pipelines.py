@@ -95,6 +95,13 @@ def synchronize(device: str) -> None:
         torch.mps.synchronize()
 
 
+def empty_cache(device: str) -> None:
+    if device.startswith("cuda"):
+        torch.cuda.empty_cache()
+    elif device.startswith("mps"):
+        torch.mps.empty_cache()
+
+
 def load_base_config(layout_set: str) -> dict[str, Any]:
     path = V1_CONFIG_DIR / LAYOUT_CONFIGS[layout_set]
     with open(path) as f:
@@ -155,9 +162,12 @@ class Pipeline:
         # "v1@1" = V1 with torch seed 1: a seed-control run that measures the algorithm's own
         # run-to-run variability (the perspective detector subsamples pixels at random).
         # "v2+orient" = V2 with orientation selection (see _forward_orientation_search).
+        # "v2+cache" = V2 releasing the accelerator cache after every stage (no arithmetic change;
+        # avoids swap on unified-memory machines such as 16 GB Macs).
         label = name
         self.orientation_search = "+orient" in name
-        name, seed = parse_pipeline_name(name.replace("+orient", ""), seed)
+        self.release_cache = "+cache" in name
+        name, seed = parse_pipeline_name(name.replace("+orient", "").replace("+cache", ""), seed)
         if name not in PIPELINE_NAMES:
             raise ValueError(f"unknown pipeline {label!r}; expected one of {PIPELINE_NAMES}, optionally with @seed")
         ensure_import_paths()
@@ -200,6 +210,7 @@ class Pipeline:
         """Replace the module-level ``timed_section`` with one that synchronizes the device
         before reading the clock. Both V1 and V2 look the name up in their module globals."""
         device = self.device
+        release = self.release_cache
 
         @contextmanager
         def timed_section(name: str, times_dict: dict[str, float]) -> Generator[None, None, None]:
@@ -207,6 +218,8 @@ class Pipeline:
             start = time.perf_counter()
             yield
             synchronize(device)
+            if release:
+                empty_cache(device)
             times_dict[name] = time.perf_counter() - start
 
         self._module.timed_section = timed_section
@@ -216,6 +229,7 @@ class Pipeline:
         identifier = self.wrapper.identifier
         wrapper = self.wrapper
         device = self.device
+        release = self.release_cache
 
         class TimedIdentifier:
             def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -223,6 +237,8 @@ class Pipeline:
                 start = time.perf_counter()
                 out = identifier(*args, **kwargs)
                 synchronize(device)
+                if release:
+                    empty_cache(device)
                 wrapper.times["Layout identification"] = time.perf_counter() - start
                 return out
 
