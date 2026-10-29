@@ -3,6 +3,7 @@
 data_dir: ~/Documents/ecg-image-database   # root containing D0/, D1/, D2/
 output_dir: outputs/run                    # waveforms, metrics, figures, summary
 subset: all                                # all | ahus | emory | ptbxl (comma-separated ok)
+layout: gm2024                             # custom folders only: gm2024 (3x4 + rhythm) or ahus (Cabrera 6x1)
 n_images: null                             # null = all images in the subset
 fraction: null                             # alternative to n_images, e.g. 0.1
 seed: 0                                    # deterministic sampling and torch RNG

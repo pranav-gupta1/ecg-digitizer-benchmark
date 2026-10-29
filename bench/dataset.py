@@ -124,8 +124,14 @@ def _entry_for(path: Path, data_dir: Path) -> ImageEntry | None:
     return None
 
 
-def build_index(data_dir: str | Path) -> pd.DataFrame:
-    """Walk ``data_dir`` and return one row per raster image with ground truth present."""
+def build_index(data_dir: str | Path, custom_layout_set: str = "gm2024") -> pd.DataFrame:
+    """Walk ``data_dir`` and return one row per raster image.
+
+    In the ECG-Image-Database layout (D0/D1/D2 folders) only images with ground truth are kept.
+    Any other folder is treated as a custom image set: every image found (recursively) is
+    included with no ground truth, so it is digitized, timed and compared across pipelines but
+    not scored. ``custom_layout_set`` picks the layout family for such images.
+    """
     data_dir = Path(data_dir)
     entries: list[ImageEntry] = []
     for src in sorted(SOURCE_NAMES):
@@ -139,8 +145,40 @@ def build_index(data_dir: str | Path) -> pd.DataFrame:
             if entry is not None and Path(entry.gt_hea).is_file():
                 entries.append(entry)
     if not entries:
-        raise FileNotFoundError(f"No images with ground truth found under {data_dir}")
+        entries = _custom_entries(data_dir, custom_layout_set)
+    if not entries:
+        raise FileNotFoundError(f"No images ({', '.join(IMAGE_EXTENSIONS)}) found under {data_dir}")
     return pd.DataFrame([asdict(e) for e in entries])
+
+
+def _custom_entries(data_dir: Path, layout_set: str) -> list[ImageEntry]:
+    """Every image under ``data_dir``, without ground truth. Ahus-style limb/precordial pages
+    are recognised from 'limb' or 'precordial' in the file name when layout_set is 'ahus'."""
+    entries = []
+    for path in sorted(data_dir.rglob("*")):
+        if path.suffix.lower() not in IMAGE_EXTENSIONS or path.name.startswith("."):
+            continue
+        rel = path.relative_to(data_dir)
+        substring = None
+        if layout_set == "ahus":
+            name = path.name.lower()
+            substring = "limb" if "limb" in name else ("precordial" if "precordial" in name else None)
+        entries.append(ImageEntry(
+            image_id="__".join(rel.with_suffix("").parts),
+            image_path=str(path),
+            source="custom",
+            source_name="custom",
+            record_id=path.stem,
+            variant="",
+            variant_label="custom image",
+            category=rel.parts[0] if len(rel.parts) > 1 else "custom",
+            page="",
+            layout_set=layout_set,
+            layout_substring=substring,
+            gt_hea="",
+            seconds=10.0 if layout_set == "gm2024" else 5.0,
+        ))
+    return entries
 
 
 def select_images(

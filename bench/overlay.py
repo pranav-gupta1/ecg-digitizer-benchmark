@@ -22,6 +22,10 @@ from bench.pipelines import Pipeline, ensure_import_paths
 def pick_cases(images: pd.DataFrame, metrics: pd.DataFrame, n: int) -> pd.DataFrame:
     """Return a frame of image rows with a ``case`` label (best/median/worst per source)."""
     m = metrics[metrics["pipeline"] == "v2"]
+    if m.empty:  # custom folder without ground truth: no ranking possible, show examples
+        ex = images.head(n).copy()
+        ex["case"], ex["mean_snr"] = "example", float("nan")
+        return ex
     per_image = m.groupby("image_id")["snr_db"].mean().rename("mean_snr").reset_index()
     per_image = per_image.merge(images, on="image_id")
     picks: list[pd.DataFrame] = []
@@ -83,7 +87,8 @@ def make_overlay_figures(cfg: dict[str, Any], images: pd.DataFrame, metrics: pd.
             if max(h, w) > 2400:
                 s = 2400 / max(h, w)
                 blended = cv2.resize(blended, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA)
-            name = f"{e.source_name}_{e.case}_{e.image_id}_snr{e.mean_snr:.1f}.jpg"
+            score = f"_snr{e.mean_snr:.1f}" if e.mean_snr == e.mean_snr else ""  # no score without ground truth
+            name = f"{e.source_name}_{e.case}_{e.image_id}{score}.jpg"
             cv2.imwrite(str(fig_dir / name), blended, [cv2.IMWRITE_JPEG_QUALITY, 88])
             rows.append({"image_id": e.image_id, "source": e.source_name, "case": e.case, "mean_snr_db": round(e.mean_snr, 2),
                          "layout": out["layout_name"], "rotated": holder["rotated"], "y0": holder["y0"], "x0": holder["x0"], "file": name})

@@ -54,6 +54,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--data-dir")
     p.add_argument("--output-dir")
     p.add_argument("--subset", help="all | ahus | emory | ptbxl (comma-separated ok)")
+    p.add_argument("--layout", help="layout family for a custom image folder: gm2024 (3x4 + rhythm strip, default) or ahus (Cabrera 6x1 pages)")
     p.add_argument("--n-images", type=int)
     p.add_argument("--fraction", type=float)
     p.add_argument("--seed", type=int)
@@ -73,7 +74,7 @@ def load_settings(args: argparse.Namespace) -> dict[str, Any]:
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
     for key in ["data_dir", "output_dir", "subset", "n_images", "fraction", "seed", "device", "weights_dir",
-                "warmup_images", "save_overlays", "max_shift_ms"]:
+                "warmup_images", "save_overlays", "max_shift_ms", "layout"]:
         val = getattr(args, key, None)
         if val is not None:
             cfg[key] = val
@@ -207,6 +208,8 @@ def evaluate_all(cfg: dict[str, Any], images: pd.DataFrame, out_dir: Path) -> pd
     wave_dir = out_dir / "waveforms"
     names = sorted(set(cfg["pipelines"]) | ({p.name for p in wave_dir.iterdir() if p.is_dir()} if wave_dir.is_dir() else set()))
     for _, e in images.iterrows():
+        if not isinstance(e.gt_hea, str) or not e.gt_hea:
+            continue  # custom image without ground truth: nothing to score
         if e.gt_hea not in gt_cache:
             gt_cache[e.gt_hea] = load_ground_truth(e.gt_hea, e.seconds)
         gt, _ = gt_cache[e.gt_hea]
@@ -217,8 +220,9 @@ def evaluate_all(cfg: dict[str, Any], images: pd.DataFrame, out_dir: Path) -> pd
             pred = load_waveform(path)
             for m in evaluate_image(gt, pred, e.layout_set, int(cfg.get("max_shift_ms", 100))):
                 rows.append({"image_id": e.image_id, "pipeline": name, **m})
-    metrics = pd.DataFrame(rows)
     meta_cols = ["image_id", "source", "source_name", "record_id", "variant", "variant_label", "category", "page", "layout_set"]
+    metric_cols = ["image_id", "pipeline", "lead", "snr_db", "pearson", "rmse", "mse", "shift_ms", "n_valid", "nan_fraction"]
+    metrics = pd.DataFrame(rows) if rows else pd.DataFrame(columns=metric_cols)
     metrics = metrics.merge(images[meta_cols], on="image_id", how="left")
     metrics.to_csv(out_dir / "metrics_per_lead.csv", index=False)
     return metrics
@@ -231,7 +235,9 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"device={cfg['device']}  data_dir={cfg['data_dir']}  output_dir={out_dir}")
 
-    index = build_index(cfg["data_dir"])
+    index = build_index(cfg["data_dir"], cfg.get("layout") or "gm2024")
+    if (index["source"] == "custom").all():
+        print(f"custom image folder: no ground truth, so images are digitized, timed and compared across pipelines but not scored (layout {cfg.get('layout') or 'gm2024'})")
     if args.image_list:
         wanted = {line.strip() for line in open(args.image_list) if line.strip()}
         images = index[index["image_id"].isin(wanted)].sort_values("image_id").reset_index(drop=True)

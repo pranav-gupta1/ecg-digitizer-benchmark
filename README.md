@@ -22,7 +22,24 @@ Dataset: Kaggle `physionet/ecg-image-database` (36 GB, CC BY-ND 4.0). With a Kag
 bash scripts/download_dataset.sh ~/Documents/ecg-image-database
 ```
 
-The script expects `<data_dir>/D0`, `D1`, `D2` (PTB-XL, Emory, Ahus) as in the Kaggle release.
+With the Kaggle layout (`<data_dir>/D0`, `D1`, `D2`: PTB-XL, Emory, Ahus) every image is scored
+against its ground-truth ECG. Any other folder of images also works (see below).
+
+## Quick start
+
+```bash
+# original (v1) and optimised (v2) on the same 100 images; GPU if available, otherwise CPU
+python bench/run_benchmark.py --data-dir /path/to/ecg-image-database --n-images 100 --device auto --output-dir outputs/run100
+```
+
+Open `outputs/run100/summary.md`: speed per version and per stage, SNR / RMSE / Pearson per
+source and capture type, V1 vs V2 agreement, and the comparison with the npj paper. Digitized
+waveforms are in `outputs/run100/waveforms/<version>/<image>.csv` (microvolts, one column per lead).
+
+Your own folder of ECG images (no ground truth): the same command with `--data-dir` pointing to
+it. Every image in the folder (and subfolders) is digitized and timed by each version and the
+versions are compared with each other; accuracy scores need ground truth and are skipped. Add
+`--layout ahus` for two-page Cabrera 6x1 printouts (default is 3x4 plus rhythm strip).
 
 ## Run
 
@@ -39,7 +56,8 @@ python bench/run_benchmark.py --data-dir /cluster/ecg-image-database --device cu
 
 Flags (all also settable in `configs/benchmark.yaml`): `--data-dir`, `--output-dir`,
 `--n-images N` or `--fraction 0.1`, `--subset ahus|emory|ptbxl|all`, `--device auto|cpu|cuda|mps`,
-`--pipelines v1,v2`, `--seed`, `--save-overlays N`, `--no-resume`.
+`--pipelines v1,v2`, `--seed`, `--save-overlays N`, `--layout gm2024|ahus` (custom folders),
+`--image-list FILE`, `--no-resume`.
 
 Runs are resumable: re-running with the same `--output-dir` skips images already done, so an
 interrupted cluster or Colab job continues where it stopped.
