@@ -71,6 +71,12 @@ Outputs in `--output-dir`:
 Other tools:
 
 ```bash
+# one image, every stage, side by side for several pipelines, with scores and timings
+python bench/inspect_image.py --image ~/Documents/ecg-image-database/D1/D1_000354/D1_000354_04.jpeg --pipelines v1,v2,v2+cache
+# -> outputs/inspect/<image_id>/comparison.png, <pipeline>_stages.png, metrics.md
+```
+
+```bash
 python bench/dataset_stats.py --data-dir ~/Documents/ecg-image-database   # dataset characteristics table
 python -m pytest tests/equivalence -q                                      # V1 vs V2 module and end-to-end equivalence
 ```
