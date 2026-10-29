@@ -136,6 +136,29 @@ def build_model_config(
     return node
 
 
+# Quarter turns tried by the experimental orientation search, upstream behaviour first so that
+# ties keep it. torch.rot90 k: 3 = 90 degrees clockwise, 1 = counter-clockwise, 2 = 180 degrees.
+ROTATION_MODES = ("cw", "ccw", "none", "180")
+ROTATION_K = {"cw": 3, "ccw": 1, "none": 0, "180": 2}
+
+
+def make_rotation(mode: str, fired: dict[str, bool] | None = None) -> Any:
+    """Replacement for ``InferenceWrapper._rotate_on_resample`` that applies ``mode`` whenever the
+    upstream rule would rotate (warped canvas taller than wide), and leaves other images alone."""
+
+    def rotate(img: torch.Tensor, sig: torch.Tensor, grid: torch.Tensor, text: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        if img.shape[2] <= img.shape[3]:
+            return img, sig, grid, text
+        if fired is not None:
+            fired["rotated"] = True
+        k = ROTATION_K[mode]
+        if k == 0:
+            return img, sig, grid, text
+        return tuple(torch.rot90(x, k=k, dims=(2, 3)) for x in (img, sig, grid, text))
+
+    return rotate
+
+
 def parse_pipeline_name(name: str, default_seed: int = 0) -> tuple[str, int]:
     """'v1' -> ('v1', default_seed); 'v1@3' -> ('v1', 3)."""
     if "@" in name:
@@ -292,29 +315,17 @@ class Pipeline:
         Upstream ``_rotate_on_resample`` turns the warped tensor 90 degrees clockwise whenever it
         is taller than wide. That is wrong for portrait photos of a landscape ECG (monitor and
         phone photos) and for sideways paper photographed the other way round. When the default
-        rule fires, this also runs the pipeline with a counter-clockwise turn and with no turn,
-        and keeps the candidate with the lowest layout-matching cost (the algorithm's own fit
-        score; no ground truth involved). Images where the rule does not fire run once and are
-        identical to the base pipeline. Wall time is the sum over all candidates run.
+        rule fires, this also runs the pipeline with the other three quarter turns
+        (counter-clockwise, none, 180 degrees) and keeps the candidate with the lowest
+        layout-matching cost (the algorithm's own fit score; no ground truth involved). Images
+        where the rule does not fire run once and are identical to the base pipeline. Wall time
+        is the sum over all candidates run.
         """
         fired = {"rotated": False}
-
-        def rotation(mode: str) -> Any:
-            def rotate(img: torch.Tensor, sig: torch.Tensor, grid: torch.Tensor, text: torch.Tensor) -> tuple[torch.Tensor, ...]:
-                if img.shape[2] <= img.shape[3]:
-                    return img, sig, grid, text
-                fired["rotated"] = True
-                if mode == "none":
-                    return img, sig, grid, text
-                k = 3 if mode == "cw" else 1  # k=3 is the upstream behaviour
-                return tuple(torch.rot90(x, k=k, dims=(2, 3)) for x in (img, sig, grid, text))
-
-            return rotate
-
         candidates: list[tuple[str, dict[str, Any]]] = []
         try:
-            for mode in ("cw", "ccw", "none"):
-                self.wrapper._rotate_on_resample = rotation(mode)  # instance attribute shadows the method
+            for mode in ROTATION_MODES:
+                self.wrapper._rotate_on_resample = make_rotation(mode, fired)  # instance attribute shadows the method
                 fired["rotated"] = False
                 candidates.append((mode, self._forward(image, layout_substring)))
                 if mode == "cw" and not fired["rotated"]:
